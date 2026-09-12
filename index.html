@@ -391,7 +391,7 @@ const ENTITIES = {
       {key:'loanAmount', label:'Loan amount (£)', type:'number'},
       {key:'interestRate', label:'Interest rate (%)', type:'number', step:'0.001', percent:true},
       {key:'paymentPeriod', label:'Payment period (years)', type:'number'},
-      {key:'monthlyPayment', label:'Monthly payment (£)', type:'number', step:'0.01'},
+      {key:'monthlyPayment', label:'Monthly payment (£) — calculated automatically', type:'calculated', dependsOn:['loanAmount','interestRate','paymentPeriod'], compute:(row)=>calcMonthlyPayment(row.loanAmount, row.interestRate, row.paymentPeriod)},
       {key:'approvalStatus', label:'Approval status', type:'select', options:['Process','Accepted','Rejected'], filterable:true},
     ],
     columns:['id','clientId','propertyId','provider','loanAmount','interestRate','paymentPeriod','monthlyPayment','approvalStatus'],
@@ -649,6 +649,20 @@ function dateFmt(d){
   return dt.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'});
 }
 function slug(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function calcMonthlyPayment(loanAmount, annualInterestRate, years){
+  const P = parseFloat(loanAmount);
+  const annualRate = parseFloat(annualInterestRate); // stored as a fraction, e.g. 0.044 = 4.4%
+  const n = parseFloat(years) * 12; // total number of monthly payments
+  if(!P || P<=0 || !n || n<=0) return '';
+  if(!annualRate || annualRate<=0){
+    // interest-free edge case: straight-line repayment
+    return Math.round((P/n)*100)/100;
+  }
+  const r = annualRate/12; // monthly interest rate
+  const factor = Math.pow(1+r, n);
+  const payment = P * r * factor / (factor - 1);
+  return Math.round(payment*100)/100;
+}
 function statusPillClass(s){
   const key = slug(s);
   const known = ['available','underoffer','sold','accepted','process','rejected','complete','interested','notinterested','approved'];
@@ -839,6 +853,42 @@ function renderTableSection(entityKey){
 /* ============================================================
    MODAL: ADD / EDIT
    ============================================================ */
+function wireCalculatedFields(entityKey, form){
+  const cfg = ENTITIES[entityKey];
+  const calcFields = cfg.fields.filter(f=>f.compute);
+  if(!calcFields.length) return;
+
+  function readFieldValue(ff, el){
+    let v = el.value;
+    if(ff.type==='number'){
+      v = v===''? '' : parseFloat(v);
+      if(ff.percent && v!=='') v = v/100;
+    }
+    return v;
+  }
+  function update(){
+    // build a temp row from every current, non-calculated form input
+    const tempRow = {};
+    cfg.fields.forEach(ff=>{
+      if(ff.type==='calculated') return;
+      const el = form.querySelector(`[name="${ff.key}"]`);
+      if(el) tempRow[ff.key] = readFieldValue(ff, el);
+    });
+    calcFields.forEach(f=>{
+      const result = f.compute(tempRow);
+      const displayEl = form.querySelector(`[name="${f.key}"]`);
+      if(displayEl) displayEl.value = (result===''||result===undefined||result===null||isNaN(result)) ? '—' : money(result);
+    });
+  }
+  const driverKeys = new Set();
+  calcFields.forEach(f=>{ (f.dependsOn||[]).forEach(k=>driverKeys.add(k)); });
+  driverKeys.forEach(k=>{
+    const el = form.querySelector(`[name="${k}"]`);
+    if(el) el.addEventListener('input', update);
+  });
+  update();
+}
+
 function openModal(entityKey, existingId){
   const cfg = ENTITIES[entityKey];
   const row = existingId ? DATA[entityKey].find(r=>r.id===existingId) : null;
@@ -848,6 +898,10 @@ function openModal(entityKey, existingId){
     const val = row ? row[f.key] : '';
     if(f.readonly){
       return `<input type="text" value="${esc(isEdit ? val : '(auto-generated)')}" disabled>`;
+    }
+    if(f.type==='calculated'){
+      const display = (val!==undefined && val!=='' && val!==null) ? money(val) : '—';
+      return `<input type="text" name="${f.key}" value="${esc(display)}" disabled data-calculated-display="1">`;
     }
     if(f.type==='select'){
       return `<select name="${f.key}">
@@ -903,18 +957,23 @@ function openModal(entityKey, existingId){
   const backdrop = document.getElementById('modalBackdrop');
   backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) closeModal(); });
   document.getElementById('cancelBtn').addEventListener('click', closeModal);
+  wireCalculatedFields(entityKey, document.getElementById('entityForm'));
   document.getElementById('entityForm').addEventListener('submit', (e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
     const newRow = row ? {...row} : {id: nextId(entityKey)};
     cfg.fields.forEach(f=>{
-      if(f.readonly) return;
+      if(f.readonly || f.type==='calculated') return;
       let v = fd.get(f.key);
       if(f.type==='number'){
         v = v===''||v===null ? '' : parseFloat(v);
         if(f.percent && v!=='') v = v/100;
       }
       newRow[f.key] = v;
+    });
+    // calculated fields are derived from the other values above, never typed in directly
+    cfg.fields.forEach(f=>{
+      if(f.compute) newRow[f.key] = f.compute(newRow);
     });
     // required check
     const missing = cfg.fields.filter(f=>f.required && !newRow[f.key]);
