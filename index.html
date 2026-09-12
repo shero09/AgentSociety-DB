@@ -405,7 +405,7 @@ const ENTITIES = {
       {key:'rent', label:'Rent (£/mo)', type:'number'},
       {key:'maintenanceCost', label:'Maintenance cost (£/mo)', type:'number'},
       {key:'insuranceCost', label:'Insurance cost (£/mo)', type:'number'},
-      {key:'annualCost', label:'Annual cost (£)', type:'number'},
+      {key:'annualCost', label:'Total monthly cost (£) — calculated automatically', type:'calculated', dependsOn:['serviceCharge','rent','maintenanceCost','insuranceCost'], compute:(row)=>calcServiceChargeTotal(row.serviceCharge, row.rent, row.maintenanceCost, row.insuranceCost)},
       {key:'date', label:'Date', type:'date'},
     ],
     columns:['id','propertyId','serviceCharge','rent','maintenanceCost','insuranceCost','annualCost','date'],
@@ -662,6 +662,15 @@ function calcMonthlyPayment(loanAmount, annualInterestRate, years){
   const factor = Math.pow(1+r, n);
   const payment = P * r * factor / (factor - 1);
   return Math.round(payment*100)/100;
+}
+function calcServiceChargeTotal(serviceCharge, rent, maintenanceCost, insuranceCost){
+  const vals = [serviceCharge, rent, maintenanceCost, insuranceCost].map(v=>{
+    const n = parseFloat(v);
+    return isNaN(n) ? 0 : n;
+  });
+  const anyEntered = [serviceCharge, rent, maintenanceCost, insuranceCost].some(v=>v!==''&&v!==undefined&&v!==null);
+  if(!anyEntered) return '';
+  return Math.round(vals.reduce((a,b)=>a+b,0)*100)/100;
 }
 function statusPillClass(s){
   const key = slug(s);
