@@ -336,9 +336,9 @@ const ENTITIES = {
       {key:'fullname', label:'Full name', type:'text', required:true},
       {key:'number', label:'Phone number', type:'text'},
       {key:'email', label:'Email address', type:'text'},
-      {key:'locationPreference', label:'Location preference', type:'text'},
-      {key:'propertyType', label:'Property type preference', type:'text'},
-      {key:'status', label:'Client status', type:'select', options:['First time buyer','Moving Home','Buying additional property']},
+      {key:'locationPreference', label:'Location preference', type:'select', filterable:true, options:['London','Manchester','Birmingham','Leeds','Bristol','Oxford','Brighton','Reading','Milton Keynes','Exeter','Hastings','Kent','Cambridge','Liverpool','Newcastle','Sheffield','Nottingham','Southampton']},
+      {key:'propertyType', label:'Property type preference', type:'select', filterable:true, options:['Apartment','Detached','Semi Detached','Terraced','Bungalow','Park homes','Farm/Land']},
+      {key:'status', label:'Client status', type:'select', options:['First time buyer','Moving Home','Buying additional property'], filterable:true},
     ],
     columns:['id','fullname','number','email','locationPreference','propertyType','status'],
   },
@@ -353,7 +353,7 @@ const ENTITIES = {
       {key:'floorSize', label:'Floor size', type:'text', placeholder:'e.g. 1198 sq ft'},
       {key:'price', label:'Listing price (£)', type:'number'},
       {key:'listingDate', label:'Listing date', type:'date'},
-      {key:'status', label:'Property status', type:'select', options:['Available','Under offer','Sold']},
+      {key:'status', label:'Property status', type:'select', options:['Available','Under offer','Sold'], filterable:true},
     ],
     columns:['id','address','type','bedrooms','bathrooms','floorSize','price','listingDate','status'],
   },
@@ -364,7 +364,7 @@ const ENTITIES = {
       {key:'clientId', label:'Client', type:'ref', ref:'clients', required:true},
       {key:'propertyId', label:'Property', type:'ref', ref:'properties', required:true},
       {key:'date', label:'Date', type:'date'},
-      {key:'outcome', label:'Outcome', type:'select', options:['Interested','Not Interested']},
+      {key:'outcome', label:'Outcome', type:'select', options:['Interested','Not Interested'], filterable:true},
       {key:'note', label:'Note', type:'textarea'},
     ],
     columns:['id','clientId','propertyId','date','outcome','note'],
@@ -377,7 +377,7 @@ const ENTITIES = {
       {key:'propertyId', label:'Property', type:'ref', ref:'properties', required:true},
       {key:'amount', label:'Offer amount (£)', type:'number'},
       {key:'date', label:'Date', type:'date'},
-      {key:'status', label:'Status', type:'select', options:['Process','Accepted','Rejected','Complete']},
+      {key:'status', label:'Status', type:'select', options:['Process','Accepted','Rejected','Complete'], filterable:true},
     ],
     columns:['id','clientId','propertyId','amount','date','status'],
   },
@@ -392,7 +392,7 @@ const ENTITIES = {
       {key:'interestRate', label:'Interest rate (%)', type:'number', step:'0.001', percent:true},
       {key:'paymentPeriod', label:'Payment period (years)', type:'number'},
       {key:'monthlyPayment', label:'Monthly payment (£)', type:'number', step:'0.01'},
-      {key:'approvalStatus', label:'Approval status', type:'select', options:['Process','Accepted','Rejected']},
+      {key:'approvalStatus', label:'Approval status', type:'select', options:['Process','Accepted','Rejected'], filterable:true},
     ],
     columns:['id','clientId','propertyId','provider','loanAmount','interestRate','paymentPeriod','monthlyPayment','approvalStatus'],
   },
@@ -419,7 +419,7 @@ const ENTITIES = {
       {key:'paymentType', label:'Payment type', type:'select', options:['Card','Cash','Bank Transfer','Cheque']},
       {key:'amount', label:'Amount (£)', type:'number', step:'0.01'},
       {key:'date', label:'Date', type:'date'},
-      {key:'status', label:'Status', type:'select', options:['Approved','Pending','Declined']},
+      {key:'status', label:'Status', type:'select', options:['Approved','Pending','Declined'], filterable:true},
     ],
     columns:['id','clientId','propertyId','paymentType','amount','date','status'],
   },
@@ -571,7 +571,7 @@ const SEED = {
 let DATA = JSON.parse(JSON.stringify(SEED)); // in-memory copy of all entity arrays; seeded immediately so first paint never crashes
 let activeSection = 'dashboard';
 let searchTerm = '';
-let filterValue = '';
+let filters = {}; // { [entityKey]: { [fieldKey]: value } }
 const STORAGE_KEY = 'agentsociety:data:v1';
 
 async function loadData(){
@@ -673,7 +673,7 @@ function renderNav(){
   nav.querySelectorAll('.nav-item').forEach(el=>{
     el.addEventListener('click', ()=>{
       activeSection = el.dataset.section;
-      searchTerm=''; filterValue='';
+      searchTerm=''; filters={};
       renderNav();
       renderApp();
     });
@@ -778,11 +778,13 @@ function renderTableSection(entityKey){
       });
     });
   }
-  // status filter (uses field named status/approvalStatus/outcome if present)
-  const filterField = cfg.fields.find(f=>['status','approvalStatus','outcome'].includes(f.key));
-  if(filterField && filterValue){
-    rows = rows.filter(r=>r[filterField.key]===filterValue);
-  }
+  // dropdown filters — any field marked filterable, all applied together
+  const filterFields = cfg.fields.filter(f=>f.filterable);
+  const activeFilters = filters[entityKey] || {};
+  filterFields.forEach(f=>{
+    const val = activeFilters[f.key];
+    if(val) rows = rows.filter(r=>r[f.key]===val);
+  });
 
   const head = cfg.columns.map(colKey=>{
     const f = cfg.fields.find(f=>f.key===colKey);
@@ -803,7 +805,10 @@ function renderTableSection(entityKey){
     </tr>`;
   }).join('') : `<tr><td colspan="${cfg.columns.length+1}"><div class="empty-state"><div class="big">Nothing here yet</div>Add the first ${cfg.label.toLowerCase()} to get started.</div></td></tr>`;
 
-  const filterOptions = filterField ? [...new Set(DATA[entityKey].map(r=>r[filterField.key]).filter(Boolean))] : [];
+  const filterOptionsByField = {};
+  filterFields.forEach(f=>{
+    filterOptionsByField[f.key] = [...new Set(DATA[entityKey].map(r=>r[f.key]).filter(Boolean))].sort();
+  });
 
   return `
     <div class="page-head">
@@ -817,10 +822,13 @@ function renderTableSection(entityKey){
     </div>
     <div class="toolbar">
       <input type="search" id="searchInput" placeholder="Search ${cfg.plural.toLowerCase()}..." value="${esc(searchTerm)}">
-      ${filterField ? `<select id="filterSelect">
-        <option value="">All ${filterField.label.replace(':','')}</option>
-        ${filterOptions.map(o=>`<option value="${esc(o)}" ${filterValue===o?'selected':''}>${esc(o)}</option>`).join('')}
-      </select>` : ''}
+      ${filterFields.map(f=>`
+        <select class="filterSelect" data-filter-key="${f.key}">
+          <option value="">All ${esc(f.label.replace(':',''))}</option>
+          ${filterOptionsByField[f.key].map(o=>`<option value="${esc(o)}" ${activeFilters[f.key]===o?'selected':''}>${esc(o)}</option>`).join('')}
+        </select>
+      `).join('')}
+      ${Object.keys(activeFilters).some(k=>activeFilters[k]) ? `<button class="btn secondary small" id="clearFilters">Clear filters</button>` : ''}
     </div>
     <div class="table-wrap">
       <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
@@ -989,10 +997,17 @@ function renderApp(){
       si.setSelectionRange(si.value.length, si.value.length);
     });
   }
-  const filterSelect = document.getElementById('filterSelect');
-  if(filterSelect){
-    filterSelect.addEventListener('change', (e)=>{
-      filterValue = e.target.value;
+  app.querySelectorAll('.filterSelect').forEach(sel=>{
+    sel.addEventListener('change', (e)=>{
+      if(!filters[activeSection]) filters[activeSection] = {};
+      filters[activeSection][e.target.dataset.filterKey] = e.target.value;
+      renderApp();
+    });
+  });
+  const clearFiltersBtn = document.getElementById('clearFilters');
+  if(clearFiltersBtn){
+    clearFiltersBtn.addEventListener('click', ()=>{
+      filters[activeSection] = {};
       renderApp();
     });
   }
